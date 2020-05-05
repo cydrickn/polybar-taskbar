@@ -1,3 +1,11 @@
 # Polybar Taskbar Scripts
 
-g++ main.cpp -lxcb -lxcb-ewmh -lX11
+Build: 
+```bash
+g++ *.c* -lxcb -lxcb-ewmh -lX11 -o taskbar
+```
+
+User
+```bash
+./taskbar ./taskbar-example.ini
+```

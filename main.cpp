@@ -7,9 +7,29 @@
 #include <string>
 #include <regex>
 #include <unistd.h>
+#include <cmath>
 #include "INIReader.h"
 
 using namespace std;
+
+string pad_both(string &s, long width)
+{
+    if (width > 0) {
+        int len = s.length();
+        int remaining = width - len;
+        if (remaining <= 0) {
+            return s;
+        }
+
+        int pad_left = ceil(remaining / 2);
+        int pad_right = floor(remaining / 2);
+
+        s.insert(s.begin(), pad_left, ' ');
+        s.insert(s.end(), pad_right, ' ');
+    }
+
+    return s;
+}
 
 class ewmh_i {
 public:
@@ -44,8 +64,9 @@ string get_reply_string(xcb_ewmh_get_utf8_strings_reply_t *reply) {
     return str;
 }
 
-string generate_value(xcb_connection_t* conn, xcb_window_t win, string format, uint32_t currentDesktop) {
+string generate_value(xcb_connection_t* conn, xcb_window_t win, string state, uint32_t currentDesktop) {
     string name;
+    uint32_t pid;
     string generated;
     xcb_ewmh_connection_t eCon= init(conn);
     xcb_ewmh_get_utf8_strings_reply_t utf8_reply{};
@@ -54,10 +75,87 @@ string generate_value(xcb_connection_t* conn, xcb_window_t win, string format, u
     xcb_ewmh_get_wm_desktop_reply(&eCon, xcb_ewmh_get_wm_desktop(&eCon, win), &desktop, nullptr);
     if (desktop == currentDesktop) {
         xcb_ewmh_get_wm_name_reply(&eCon, xcb_ewmh_get_wm_name(&eCon, win), &utf8_reply, nullptr);
+        xcb_ewmh_get_wm_pid_reply(&eCon, xcb_ewmh_get_wm_pid(&eCon, win), &pid, nullptr);
 
         name = get_reply_string(&utf8_reply).c_str();
-        generated = std::regex_replace(format, std::regex("<name>"), name);
-        generated = std::regex_replace(generated, std::regex("<id>"), to_string(win));
+        string state_value = config.Get("item", "state-" + state, state);
+        string label = config.Get("item", "label-" + state, "%name%");
+
+        label = std::regex_replace(label, std::regex("%name%"), name);
+        label = std::regex_replace(label, std::regex("%state%"), state_value);
+        label = std::regex_replace(label, std::regex("%pid%"), to_string(pid));
+        label = std::regex_replace(label, std::regex("%wid%"), to_string(win));
+
+        long min_len = config.GetInteger("item", "label-" + state + "-minlen", 0);
+        long max_len = config.GetInteger("item", "label-" + state + "-maxlen", label.length());
+        bool ellipsis = config.GetBoolean("item", "label-" + state + "-ellipsis", false);
+        long padding = config.GetInteger("item", "label-" + state + "-padding", 0);
+        string background = config.Get("item", "label-" + state + "-background", "");
+        string foreground = config.Get("item", "label-" + state + "-foreground", "");
+        string format = config.Get("item", "format-" + state, "<label>");
+        if (label.length() < min_len) {
+            label = pad_both(label, min_len);
+        } else if (label.length() > max_len && ellipsis) {
+            label = label.substr(0, max_len - 3) + "...";
+        } else if (label.length() > max_len && !ellipsis) {
+            label = label.substr(0, max_len);
+        }
+
+        if (padding > 0) {
+            label = pad_both(label, padding * 2);
+        }
+
+        if (foreground != "" && background != "") {
+            label = "%{B" + background + "}%{F" +  foreground + "}" + label + "${B- F-}";
+        } else if (background != "") {
+            label = "%{B" +  background + "}" + label + "%{B-}";
+        } else if (foreground != "") {
+            label = "%{F" +  background + "}" + label + "%{F-}";
+        }
+
+        generated = std::regex_replace(format, std::regex("<label>"), label);
+        generated = std::regex_replace(generated, std::regex("<state>"), state_value);
+
+        // action
+        string click_left = config.Get("item", "click-left-" + state, "");
+        click_left = std::regex_replace(click_left, std::regex("%name%"), name);
+        click_left = std::regex_replace(click_left, std::regex("%state%"), state_value);
+        click_left = std::regex_replace(click_left, std::regex("%pid%"), to_string(pid));
+        click_left = std::regex_replace(click_left, std::regex("%wid%"), to_string(win));
+
+        string click_right = config.Get("item", "click-right-" + state, "");
+        click_right = std::regex_replace(click_right, std::regex("%name%"), name);
+        click_right = std::regex_replace(click_right, std::regex("%state%"), state_value);
+        click_right = std::regex_replace(click_right, std::regex("%pid%"), to_string(pid));
+        click_right = std::regex_replace(click_right, std::regex("%wid%"), to_string(win));
+
+        string double_click_left = config.Get("item", "double-click-left-" + state, "");
+        double_click_left = std::regex_replace(double_click_left, std::regex("%name%"), name);
+        double_click_left = std::regex_replace(double_click_left, std::regex("%state%"), state_value);
+        double_click_left = std::regex_replace(double_click_left, std::regex("%pid%"), to_string(pid));
+        double_click_left = std::regex_replace(double_click_left, std::regex("%wid%"), to_string(win));
+
+        string double_click_right = config.Get("item", "double-click-right-" + state, "");
+        double_click_right = std::regex_replace(double_click_right, std::regex("%name%"), name);
+        double_click_right = std::regex_replace(double_click_right, std::regex("%state%"), state_value);
+        double_click_right = std::regex_replace(double_click_right, std::regex("%pid%"), to_string(pid));
+        double_click_right = std::regex_replace(double_click_right, std::regex("%wid%"), to_string(win));
+
+        if (click_left != "") {
+            generated = "%{A1:" + click_left + ":}" + generated + "%{A}";
+        }
+
+        if (click_right != "") {
+            generated = "%{A3:" + click_right + ":}" + generated + "%{A}";
+        }
+
+        if (double_click_left != "") {
+            generated = "%{A6:" + double_click_left + ":}" + generated + "%{A}";
+        }
+
+        if (double_click_right != "") {
+            generated = "%{A8:" + double_click_right + ":}" + generated + "%{A}";
+        }
 
         return generated;
     } else {
@@ -94,22 +192,21 @@ void print_child(xcb_connection_t *conn) {
 
     vector<string> values;
 
-    for (int i = 0; i < reply.windows_len; i++) {
+    long max_items = config.GetInteger("main", "max-items", reply.windows_len);
+
+    for (int i = 0; i < max_items; i++) {
         string value = "";
-        if (to_string(active_window) == to_string(reply.windows[i])) {
-            value = generate_value(conn, reply.windows[i], config.GetString("format", "active", "<id>:<name>"), desktop);
-        } else {
-            value = generate_value(conn, reply.windows[i], config.GetString("format", "item", "<id>:<name>"), desktop);
-        }
+        bool is_active = to_string(active_window) == to_string(reply.windows[i]);
+        value = generate_value(conn, reply.windows[i], is_active ? "active" : "inactive", desktop);
         if (value != "") {
             values.push_back(value);
         }
     }
 
     puts(std::regex_replace(
-        config.GetString("format", "output", "<output>"),
+        config.GetString("main", "output", "<output>"),
         std::regex("<output>"),
-        implode(config.GetString("format", "separator", ""),values)
+        implode(config.GetString("main", "separator", ""),values)
     ).c_str());
 }
 
